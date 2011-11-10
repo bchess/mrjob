@@ -27,7 +27,7 @@ def piped_subprocess_queue(params, subprocess_args):
 			line = params['stdout'].readline()
 			if not line:
 				break
-			params['queue'].put(line)
+			params['queue'].put(line[:-1])
 			my_log('REDUCE read line', line)
 
 	read_stdin, write_stdin = os.pipe()
@@ -130,7 +130,7 @@ def reducer_runner(iter, out, params):
 
 	for k, v in iter:
 		line = '\t'.join((k, v))
-		os.write(params['stdin_fds'][1], line)
+		os.write(params['stdin_fds'][1], line + '\n')
 		my_log('REDUCE writing >>>%s<<<' % line)
 		reducer_flush()
 
@@ -201,7 +201,7 @@ class DiscoJobRunner(EMRJobRunner):
 			disco_jobs.append(job)
 
 		for word, count in result_iterator(job.wait(show=True)):
-			print word, count
+			print '\t'.join((word, count))
 
 	def _list_all_files(self, path):
 		for dirpath, dirnames, filenames in os.walk(path):
