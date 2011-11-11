@@ -1,8 +1,11 @@
 import os
 
 import disco
-from disco.core import Job, result_iterator
+from disco.core import Job, classic_iterator
+from mrjob.runner import MRJobRunner
 from mrjob.emr import EMRJobRunner
+from mrjob.parse import is_s3_uri
+import posixpath
 
 
 ##########
@@ -141,28 +144,17 @@ def reducer_runner(iter, out, params):
 	reducer_flush()
 
 
+import logging
+log = logging.getLogger('mrjob.disco')
 
-class DiscoJobRunner(EMRJobRunner):
+class DiscoJobRunner(MRJobRunner):
 	def __init__(self, job, *args, **kwargs):
 		self._job = job
+		self._emr_runner = EMRJobRunner(*args, **kwargs)
 		super(DiscoJobRunner, self).__init__(*args, **kwargs)
 
-	def _create_s3_temp_bucket_if_needed(self):
-		return
-
 	def _run(self):
-		steps = self._job.steps()
-		steps = steps[0] # only support one for now
-
-
-		self._setup_input()
-
-		inputs = []
-		s3_conn = self.make_s3_conn()
-		for s3_input in self._s3_input_uris:
-			key = self.get_s3_key(s3_input, s3_conn)
-			url = key.generate_url(600, force_http=True)
-			inputs.append(url)
+		self._emr_runner._setup_input()
 
 		all_files = [each_file['path'] for each_file in self._files]
 		all_files.append('/home/bchess/tricks/wingdbstub.py')
@@ -173,21 +165,27 @@ class DiscoJobRunner(EMRJobRunner):
 			wrapper_args += [self._wrapper_script['name']]
 
 		# specify the steps
-		disco_jobs = []
-		for i, step in enumerate(self._get_steps()):
+
+		true_inputs = []
+		s3_conn = self._emr_runner.make_s3_conn()
+		for s3_input in self._emr_runner._s3_input_uris:
+			key = self._emr_runner.get_s3_key(s3_input, s3_conn)
+			url = key.generate_url(600, force_http=True)
+			true_inputs.append(url)
+
+		step_outputs = None
+		steps = self._get_steps()
+		for i, step in enumerate(steps):
+			log.debug('running step %d of %d' % (i + 1, len(steps)))
 			job_params = {}
 
-			if 'M' in step:
-				job_params['mapper_args'] = wrapper_args + [self._script['path'],
-					'--step-num=%d' % i, '--mapper'] + self._mr_job_extra_args()
+			if i == 0:
+				step_inputs = true_inputs
+			else:
+				step_inputs = step_outputs
 
-			if 'R' in step:
-				job_params['reducer_args'] = wrapper_args + [self._script['path'],
-					'--step-num=%d' % i, '--reducer'] + self._mr_job_extra_args()
-
-			job = Job().run(input=inputs,
-				map=mapper_runner,
-				reduce=reducer_runner,
+			job_dict = dict(
+				input=step_inputs,
 				required_files=all_files,
 				required_modules=[],
 				sort=True,
@@ -198,14 +196,30 @@ class DiscoJobRunner(EMRJobRunner):
 				],
 				params=job_params
 			)
-			disco_jobs.append(job)
 
-		for word, count in result_iterator(job.wait(show=True)):
-			print '\t'.join((word, count))
+			if 'M' in step:
+				job_params['mapper_args'] = wrapper_args + [self._script['path'],
+					'--step-num=%d' % i, '--mapper'] + self._mr_job_extra_args()
+				job_dict['map'] = mapper_runner
+
+			if 'R' in step:
+				job_params['reducer_args'] = wrapper_args + [self._script['path'],
+					'--step-num=%d' % i, '--reducer'] + self._mr_job_extra_args()
+				job_dict['reduce'] = reducer_runner
+
+
+			job = Job().run(**job_dict)
+			step_outputs = job.wait(show=True)
+
+		self._output_files = step_outputs
 
 	def _list_all_files(self, path):
 		for dirpath, dirnames, filenames in os.walk(path):
 			for each_filename in filenames:
 				yield os.path.join(dirpath, each_filename)
 
+	def stream_output(self):
+		assert self._ran_job
+		for k_v in classic_iterator(self._output_files):
+			yield '\t'.join(k_v) + '\n'
 
