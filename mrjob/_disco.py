@@ -225,10 +225,11 @@ class DiscoJobRunner(MRJobRunner):
 
 		true_inputs = []
 		s3_conn = self._emr_runner.make_s3_conn()
-		for s3_input in self._emr_runner._s3_input_uris:
-			key = self._emr_runner.get_s3_key(s3_input, s3_conn)
-			url = key.generate_url(600, force_http=True)
-			true_inputs.append(url)
+		for s3_input_glob in self._emr_runner._s3_input_uris:
+			for s3_input in self._emr_runner.ls(s3_input_glob):
+				key = self._emr_runner.get_s3_key(s3_input, s3_conn)
+				url = key.generate_url(600, force_http=True)
+				true_inputs.append(url)
 
 		step_outputs = None
 		steps = self._get_steps()
