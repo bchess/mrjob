@@ -1,4 +1,3 @@
-import itertools
 import os
 
 import disco
@@ -60,6 +59,10 @@ def piped_subprocess_queue(params, subprocess_args):
 	# It's friday; time to hack
 	try:
 		os.symlink(os.path.join(os.getcwd(), 'home'), os.path.join(mrjob_cwd, 'home'))
+	except OSError:
+		pass
+	try:
+		os.symlink(os.path.join(os.getcwd(), params['script_path']), os.path.join(mrjob_cwd, params['script_path']))
 	except OSError:
 		pass
 
@@ -192,13 +195,12 @@ class DiscoJobRunner(MRJobRunner):
 	def _run(self):
 		self._emr_runner._setup_input()
 		# self._emr_runner._upload_non_input_files()
-		import wingdbstub; wingdbstub.debugger.Break()
 		self._local_runner._files = self._files
 		self._local_runner._setup_working_dir()
 		self._local_runner._create_wrapper_script()
 
 		all_files = []
-		python_paths = [self._local_runner._working_dir[1:]]
+		python_paths = ['.']
 		for each_file in self._files:
 			if each_file.get('upload', 'file') == 'file':
 				all_files.append(each_file['path'])
@@ -255,6 +257,7 @@ class DiscoJobRunner(MRJobRunner):
 
 			job_params['extra_python_paths'] = python_paths
 			job_params['mrjob_working_dir'] = self._local_runner._working_dir
+			job_params['script_path'] = self._script['path']
 
 			if 'M' in step:
 				job_params['mapper_args'] = wrapper_args + [self._script['path'],
