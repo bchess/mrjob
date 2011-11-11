@@ -224,12 +224,10 @@ class DiscoJobRunner(MRJobRunner):
 		# specify the steps
 
 		true_inputs = []
-		s3_conn = self._emr_runner.make_s3_conn()
+		self._emr_runner.make_s3_conn()
 		for s3_input_glob in self._emr_runner._s3_input_uris:
 			for s3_input in self._emr_runner.ls(s3_input_glob):
-				key = self._emr_runner.get_s3_key(s3_input, s3_conn)
-				url = key.generate_url(600, force_http=True)
-				true_inputs.append(url)
+				true_inputs.append(s3_input)
 
 		step_outputs = None
 		steps = self._get_steps()
@@ -249,13 +247,15 @@ class DiscoJobRunner(MRJobRunner):
 				sort=True,
 				map_input_stream=[
 					disco.worker.classic.func.map_input_stream,
-					disco.worker.classic.func.gzip_line_reader,
+					# disco.worker.classic.func.gzip_line_reader,
 					mapper_in
 				],
 				params=job_params
 			)
 
 
+			job_params['aws_access_key_id'] = os.environ['AWS_ACCESS_KEY_ID']
+			job_params['aws_secret_access_key'] = os.environ['AWS_SECRET_ACCESS_KEY']
 			job_params['extra_python_paths'] = python_paths
 			job_params['mrjob_working_dir'] = self._local_runner._working_dir
 			job_params['script_path'] = self._script['path']
