@@ -1,18 +1,19 @@
+import itertools
 import os
 
 import disco
 from disco.core import Job, classic_iterator
+
 from mrjob.runner import MRJobRunner
 from mrjob.emr import EMRJobRunner
-from mrjob.parse import is_s3_uri
-import posixpath
+from mrjob.local import LocalMRJobRunner
 
 
 ##########
 # Utilities
 ##########
 def my_log(*msg):
-	return # uncomment to enable my ghetto log
+	return
 	msg = ' '.join(msg)
 	log = open('/tmp/mrdisco_stderr', 'a')
 	print >> log, msg
@@ -22,8 +23,9 @@ def my_log(*msg):
 
 def piped_subprocess_queue(params, subprocess_args):
 	import Queue
-	from subprocess import Popen, PIPE
+	from subprocess import Popen, PIPE, STDOUT
 	import thread
+	import tempfile
 
 	def my_thread(params):
 		while True:
@@ -41,10 +43,28 @@ def piped_subprocess_queue(params, subprocess_args):
 
 	params['queue'] = Queue.Queue()
 
+	# proc_stderr, proc_stderr_fn = tempfile.mkstemp()
+	proc_stderr = open('/tmp/mrdisco_job_stderr', 'a')
+	params['proc_stderr'] = proc_stderr
+	env = dict(os.environ)
+	for each_extra_path in params['extra_python_paths']:
+		env['PYTHONPATH'] += ':' + each_extra_path
+
+
+
 	def popen_close_pipes():
 		os.close(write_stdin)
 		os.close(read_stdout)
-	proc = Popen(subprocess_args, preexec_fn=popen_close_pipes, stdin=read_stdin, stdout=write_stdout, stderr=PIPE)
+	mrjob_cwd = os.path.join(os.getcwd(), params['mrjob_working_dir'][1:])
+
+	# It's friday; time to hack
+	try:
+		os.symlink(os.path.join(os.getcwd(), 'home'), os.path.join(mrjob_cwd, 'home'))
+	except OSError:
+		pass
+
+	proc = Popen(subprocess_args, preexec_fn=popen_close_pipes, stdin=read_stdin, stdout=write_stdout, stderr=proc_stderr, env=env, cwd=mrjob_cwd)
+	my_log('Launched process %d with cwd %s args %s' % (proc.pid, mrjob_cwd, subprocess_args))
 
 	# we have no business using these.  These are for the subprocess
 	os.close(read_stdin)
@@ -92,7 +112,20 @@ def mapper_runner(line, params):
 	from mrjob._disco import my_log
 
 	if line is not None:
-		os.write(params['stdin_fds'][1], line)
+		try:
+			os.write(params['stdin_fds'][1], line)
+		except OSError, error:
+			if error.errno == 32:
+				import sys
+				print >> sys.stderr, 'Shit crashed.'
+				my_stderr = params['proc_stderr']
+				print >> my_stderr, sys.path
+				print >> my_stderr, os.getcwd()
+				print >> my_stderr, os.getpid()
+				#my_stderr.seek(0)
+				#print >> sys.stderr, my_stderr.read()
+				sys.exit(1)
+
 		my_log('writing line', line)
 
 	try:
@@ -148,21 +181,43 @@ import logging
 log = logging.getLogger('mrjob.disco')
 
 class DiscoJobRunner(MRJobRunner):
+	alias = 'disco'
+
 	def __init__(self, job, *args, **kwargs):
 		self._job = job
 		self._emr_runner = EMRJobRunner(*args, **kwargs)
+		self._local_runner = LocalMRJobRunner(*args, **kwargs)
 		super(DiscoJobRunner, self).__init__(*args, **kwargs)
 
 	def _run(self):
 		self._emr_runner._setup_input()
+		# self._emr_runner._upload_non_input_files()
+		import wingdbstub; wingdbstub.debugger.Break()
+		self._local_runner._files = self._files
+		self._local_runner._setup_working_dir()
+		self._local_runner._create_wrapper_script()
 
-		all_files = [each_file['path'] for each_file in self._files]
+		all_files = []
+		python_paths = [self._local_runner._working_dir[1:]]
+		for each_file in self._files:
+			if each_file.get('upload', 'file') == 'file':
+				all_files.append(each_file['path'])
+			else:
+				new_path = os.path.basename(each_file['path'])
+				python_paths.append(new_path)
+				#if not each_file['path'].startswith(self._local_runner._get_local_tmp_dir()):
+				#	all_files.append(each_file['path'])
+
+		all_files.extend(self._list_all_files(self._local_runner._get_local_tmp_dir()))
+
+		# HACK HACK HACK
 		all_files.append('/home/bchess/tricks/wingdbstub.py')
 		all_files.extend(self._list_all_files('/home/bchess/disco/mrjob/mrjob'))
 
 		wrapper_args = self._opts['python_bin']
-		if self._wrapper_script:
-			wrapper_args += [self._wrapper_script['name']]
+		if self._local_runner._wrapper_script:
+			all_files.append(self._local_runner._wrapper_script['path'])
+			wrapper_args += [os.path.join('..', os.path.basename(self._local_runner._wrapper_script['path']))] + wrapper_args
 
 		# specify the steps
 
@@ -196,6 +251,10 @@ class DiscoJobRunner(MRJobRunner):
 				],
 				params=job_params
 			)
+
+
+			job_params['extra_python_paths'] = python_paths
+			job_params['mrjob_working_dir'] = self._local_runner._working_dir
 
 			if 'M' in step:
 				job_params['mapper_args'] = wrapper_args + [self._script['path'],

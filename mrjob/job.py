@@ -539,7 +539,7 @@ class MRJob(object):
             return EMRJobRunner(**self.emr_job_runner_kwargs())
 
         elif self.options.runner == 'disco':
-            return DiscoJobRunner(self, **self.emr_job_runner_kwargs())
+            return DiscoJobRunner(self, **self.disco_job_runner_kwargs())
 
         elif self.options.runner == 'hadoop':
             return HadoopJobRunner(**self.hadoop_job_runner_kwargs())
@@ -1508,6 +1508,19 @@ class MRJob(object):
         Re-define this if you want finer control when running jobs locally.
         """
         return self.job_runner_kwargs()
+
+    def disco_job_runner_kwargs(self):
+        """Keyword arguments to create create runners when
+        :py:meth:`make_runner` is called, when we run a job on EMR
+        (``-r emr``).
+
+        :return: map from arg name to value
+
+        Re-define this if you want finer control when running jobs on EMR.
+        """
+        return combine_dicts(
+            self.job_runner_kwargs(),
+            self._get_kwargs_from_opt_group(self.emr_opt_group))
 
     def emr_job_runner_kwargs(self):
         """Keyword arguments to create create runners when
