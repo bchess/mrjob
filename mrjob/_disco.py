@@ -1,3 +1,5 @@
+""""sleep 1000
+"""
 import os
 
 import disco
@@ -6,6 +8,7 @@ from disco.core import Job, classic_iterator
 from mrjob.runner import MRJobRunner
 from mrjob.emr import EMRJobRunner
 from mrjob.local import LocalMRJobRunner
+import _disco_worker
 
 
 ##########
@@ -21,7 +24,7 @@ def my_log(*msg):
 	log.close()
 
 def piped_subprocess_queue(params, subprocess_args):
-	import Queue
+	import collections
 	from subprocess import Popen, PIPE, STDOUT
 	import thread
 	import tempfile
@@ -31,7 +34,7 @@ def piped_subprocess_queue(params, subprocess_args):
 			line = params['stdout'].readline()
 			if not line:
 				break
-			params['queue'].put(line[:-1])
+			params['queue'].append(line[:-1])
 			my_log('REDUCE read line', line)
 
 	read_stdin, write_stdin = os.pipe()
@@ -40,7 +43,7 @@ def piped_subprocess_queue(params, subprocess_args):
 	read_stdout, write_stdout = os.pipe()
 	params['stdout_fds'] = (read_stdout, write_stdout)
 
-	params['queue'] = Queue.Queue()
+	params['queue'] = collections.deque()
 
 	# proc_stderr, proc_stderr_fn = tempfile.mkstemp()
 	proc_stderr = open('/tmp/mrdisco_job_stderr', 'a')
@@ -66,7 +69,7 @@ def piped_subprocess_queue(params, subprocess_args):
 	except OSError:
 		pass
 
-	proc = Popen(subprocess_args, preexec_fn=popen_close_pipes, stdin=read_stdin, stdout=write_stdout, stderr=proc_stderr, env=env, cwd=mrjob_cwd)
+	proc = Popen(subprocess_args, bufsize=-1, preexec_fn=popen_close_pipes, stdin=read_stdin, stdout=write_stdout, stderr=proc_stderr, env=env, cwd=mrjob_cwd)
 	my_log('Launched process %d with cwd %s args %s' % (proc.pid, mrjob_cwd, subprocess_args))
 
 	# we have no business using these.  These are for the subprocess
@@ -111,7 +114,7 @@ def mapper_in(fd, url, size, params):
 	yield None
 
 def mapper_runner(line, params):
-	import Queue
+	import collections
 	from mrjob._disco import my_log
 
 	if line is not None:
@@ -133,12 +136,12 @@ def mapper_runner(line, params):
 
 	try:
 		while True:
-			line = params['queue'].get_nowait()
+			line = params['queue'].popleft()
 			my_log('popping line from queue >>>%s<<<' % line)
 
 			k, v = line.split('\t')
 			yield k, v
-	except Queue.Empty:
+	except IndexError:
 		pass
 
 ##########
@@ -156,15 +159,14 @@ def reducer_runner(iter, out, params):
 	piped_subprocess_queue(params, args)
 
 	def reducer_flush():
-		import Queue
 		try:
 			while True:
-				line = params['queue'].get_nowait()
+				line = params['queue'].popleft()
 				my_log('REDUCE popping line from queue >>>%s<<<' % line)
 
 				k, v = line.split('\t')
 				out.add(k, v)
-		except Queue.Empty:
+		except IndexError:
 			pass
 
 	for k, v in iter:
@@ -261,7 +263,9 @@ class DiscoJobRunner(MRJobRunner):
 			job_params['script_path'] = self._script['path']
 
 			if 'M' in step:
-				job_params['mapper_args'] = wrapper_args + [self._script['path'],
+				#mapper_args = wrapper_args + ['-m', 'cProfile', '-o', '/tmp/mrjob.prof']
+				mapper_args = wrapper_args
+				job_params['mapper_args'] = mapper_args + [self._script['path'],
 					'--step-num=%d' % i, '--mapper'] + self._mr_job_extra_args()
 				job_dict['map'] = mapper_runner
 
@@ -271,7 +275,7 @@ class DiscoJobRunner(MRJobRunner):
 				job_dict['reduce'] = reducer_runner
 
 
-			job = Job().run(**job_dict)
+			job = Job(worker=_disco_worker.MyWorker()).run(**job_dict)
 			step_outputs = job.wait(show=True)
 
 		self._output_files = step_outputs
@@ -285,4 +289,5 @@ class DiscoJobRunner(MRJobRunner):
 		assert self._ran_job
 		for k_v in classic_iterator(self._output_files):
 			yield '\t'.join(k_v) + '\n'
+
 
