@@ -1,0 +1,16 @@
+1. Integration into mrjob - okay
+2. Support HTTP for input - in zeromq, still needs support in runner
+3. S3 output - done
+4. Support S3 for input - done
+5. Actually working w/ Yelp
+.. better bootstrapping --
+	tempdir for each individual job.  scp'd into there.
+	b.py run on all hosts via runner.
+.. better support for globbing
+6. support for multiple steps - done
+7. support steps with no reducer - done
+8. support steps with no mapper - done
+9. Status server
+.. slowly indicate reducers to run, one host at a time
+.. Counters
+.. deal better with failures

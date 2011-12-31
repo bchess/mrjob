@@ -1,0 +1,4 @@
+sudo apt-get install python-zmq
+
+python server.py -c localhost -p 'python ~/disco/mrzeromq/client.py' -i mobydick.txt
+

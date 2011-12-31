@@ -112,6 +112,7 @@ REGION_TO_EMR_ENDPOINT = {
     'EU': 'eu-west-1.elasticmapreduce.amazonaws.com',
     'us-east-1': 'us-east-1.elasticmapreduce.amazonaws.com',
     'us-west-1': 'us-west-1.elasticmapreduce.amazonaws.com',
+    'us-west-2': 'us-west-2.elasticmapreduce.amazonaws.com',
     '': 'elasticmapreduce.amazonaws.com',  # when no region specified
 }
 
@@ -121,6 +122,7 @@ REGION_TO_S3_ENDPOINT = {
     'EU': 's3-eu-west-1.amazonaws.com',
     'us-east-1': 's3.amazonaws.com',  # no region-specific endpoint
     'us-west-1': 's3-us-west-1.amazonaws.com',
+    'us-west-2': 's3-us-west-2.amazonaws.com',
     'ap-southeast-1': 's3-ap-southeast-1.amazonaws.com',  # no EMR endpoint yet
     '': 's3.amazonaws.com',
 }
@@ -1857,6 +1859,9 @@ http://docs.amazonwebservices.com/ElasticMapReduce/latest/DeveloperGuideindex.ht
         writeln()
         writeln('import distutils.sysconfig')
         writeln('import os')
+        writeln('import os.path')
+        writeln('import shutil')
+        writeln('import site')
         writeln('import stat')
         writeln('from subprocess import call, check_call')
         writeln('from tempfile import mkstemp')
@@ -1865,11 +1870,32 @@ http://docs.amazonwebservices.com/ElasticMapReduce/latest/DeveloperGuideindex.ht
 
         # download files using hadoop fs
         writeln('# download files using hadoop fs -copyToLocal')
+        writeln("shutil.rmtree(site.USER_SITE, True)")
+        writeln("os.makedirs(site.USER_SITE)")
+        writeln("usercustomize_file = open(os.path.join(site.USER_SITE, 'usercustomize.py'), 'w')")
+        writeln("print >> usercustomize_file, 'import site'")
+        writeln("print >> usercustomize_file, 'import os'")
+        writeln("archives = []")
+        writeln("print >> usercustomize_file, 'site.addsitedir(%r)' % os.getcwd()""") # BCHESS TODO
         for file_dict in self._files:
             if file_dict.get('bootstrap'):
                 writeln(
-                    "check_call(['hadoop', 'fs', '-copyToLocal', %r, %r])" %
+                    "#check_call(['hadoop', 'fs', '-copyToLocal', %r, %r])" % # BCHESS TODO
                     (file_dict['s3_uri'], file_dict['name']))
+            if file_dict.get('upload') == 'archive':
+                writeln(
+                    "check_call(['mv', %r, %r + '.archive'])" % # BCHESS TODO
+                    (file_dict['name'], file_dict['name']))
+                writeln(
+                    "check_call(['mkdir', %r])" % # BCHESS TODO
+                    (file_dict['name']))
+                writeln(
+                    "check_call(['tar', 'xfz', %r + '.archive', '-C', %r])" % # BCHESS TODO
+                    (file_dict['name'], file_dict['name']))
+                writeln("""archives.append(os.path.abspath(%r))""" % (file_dict['name'])) # BCHESS TODO
+                writeln("""print >> usercustomize_file, 'site.addsitedir(%%r)' %% os.path.abspath(%r)""" % (file_dict['name'])) # BCHESS TODO
+        writeln("""print >> usercustomize_file, 'os.environ["mapreduce_job_cache_local_archives"] = %r' % ','.join(archives)""")
+        writeln('usercustomize_file.close()')
         writeln()
 
         # make scripts executable

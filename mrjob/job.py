@@ -124,7 +124,6 @@ from mrjob.protocol import RawValueProtocol
 from mrjob.runner import CLEANUP_CHOICES
 from mrjob.util import log_to_stream
 from mrjob.util import parse_and_save_options
-from mrjob.util import read_input
 
 
 log = logging.getLogger('mrjob.job')
@@ -551,12 +550,17 @@ class MRJob(object):
         from mrjob.hadoop import HadoopJobRunner
         from mrjob.local import LocalMRJobRunner
         from mrjob.inline import InlineMRJobRunner
+        from mrjob.zeromq import ZeroMQJobRunner
 
         if self.options.runner == 'emr':
             return EMRJobRunner(**self.emr_job_runner_kwargs())
 
         elif self.options.runner == 'hadoop':
             return HadoopJobRunner(**self.hadoop_job_runner_kwargs())
+
+        elif self.options.runner == 'zeromq':
+            return ZeroMQJobRunner(
+                mrjob_cls=self.__class__, **self.zeromq_job_runner_kwargs())
 
         elif self.options.runner == 'inline':
             return InlineMRJobRunner(
@@ -1032,7 +1036,7 @@ class MRJob(object):
 
         self.runner_opt_group.add_option(
             '-r', '--runner', dest='runner', default='local',
-            choices=('local', 'hadoop', 'emr', 'inline'),
+            choices=('local', 'hadoop', 'emr', 'zeromq', 'inline'),
             help=('Where to run the job: local to run locally, hadoop to run'
                   ' on your Hadoop cluster, emr to run on Amazon'
                   ' ElasticMapReduce, and inline for local debugging. Default'
@@ -1339,6 +1343,18 @@ class MRJob(object):
             default=None, action='store_true',
             help='Open up an SSH tunnel to the Hadoop job tracker')
 
+        # Additional options for running on MRZeroMQ
+        self.zeromq_opt_group = OptionGroup(
+            self.option_parser,
+            'Running on MRZeroMQ (these apply when you set -r'
+            ' zeromq)')
+        self.option_parser.add_option_group(self.zeromq_opt_group)
+
+        self.zeromq_opt_group.add_option(
+            '--ec2-reservation-id', dest='ec2_reservation_id',
+            default=None, action='store',
+            help='Existing EC2 Instance IDs to use (comma delimited)')
+
     def all_option_groups(self):
         return (self.option_parser, self.mux_opt_group,
                 self.proto_opt_group, self.runner_opt_group,
@@ -1591,6 +1607,20 @@ class MRJob(object):
         Re-define this if you want finer control when running jobs locally.
         """
         return self.job_runner_kwargs()
+
+    def zeromq_job_runner_kwargs(self):
+        """Keyword arguments to create create runners when
+        :py:meth:`make_runner` is called, when we run a job on mrzeromq/ec2
+        (``-r zeromq``).
+
+        :return: map from arg name to value
+
+        Re-define this if you want finer control when running jobs on EMR.
+        """
+        return combine_dicts(
+            self.job_runner_kwargs(),
+            self._get_kwargs_from_opt_group(self.emr_opt_group),
+            self._get_kwargs_from_opt_group(self.zeromq_opt_group))
 
     def emr_job_runner_kwargs(self):
         """Keyword arguments to create create runners when
