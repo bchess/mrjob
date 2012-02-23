@@ -328,7 +328,7 @@ class Client(object):
             self.bucket_sockets[bucket_num].send(output_line)
 
     def _create_s3_connection(self):
-        if True: # === local mode
+        if False: # TODO: local mode
             from mrjob.emr import EMRJobRunner
             emr_runner = EMRJobRunner()
             return emr_runner.make_s3_conn()
