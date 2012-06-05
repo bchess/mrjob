@@ -1,0 +1,69 @@
+I've been doing some extracurriculars, and its working well enough at this
+point that I thought I'd share.  Inspiration and ideas definitely originate
+from mattj and jretz during last hackathon.  As an experiment, I wrote a
+new runner for MRJob that runs over zeromq.  It's designed to work best on
+EC2 (raw ec2, not EMR) although you can generally get it to run locally as
+well.
+
+The code is on my github account https://github.com/bchess/mrjob/ under the
+dev_zeromq branch. You do need zeromq and pyzmq installed.  If you're
+clever with your environment, you can just do it in your home directory.
+
+Pros
++ If you get zeromq and pyzmq in your environment, the bootstrapping works
+well enough that it should drop-in-replace and run any Yelp MRJob using
+just "-r zeromq" as your runner.  --ec2-instance-type and
+--num-ec2-instances are supported.
++ There's no distributed filesystem, no java.  Very low memory footprint.
++ It does have a status display, on port 2680 of the node running server.py
++ I never actually seen it be slower than Hadoop.
+
+Cons
+- I never actually seen it be faster than Hadoop.
+- The status display is incredibly lame.
+- It's really not resilient to anything going wrong.  Exception? Machine
+down? Network drop? Restart.
+- This uses EC2 directly.  It doesn't terminate instances, and Yelp's EMR
+idle job flow killer will not help you.  You need to kill them yourself.
+ If you play with this, be careful.  Do it on your own dime where you have
+ access to the AWS console and can kill your instances.  EC2 doesn't have
+ jobflow ids, but you can use the EC2 "reservation_id" to re-use an existing
+ cluster of nodes via the '--ec2-reservation-id' switch.
+ - No counters support
+ - It's not merged with the latest MRJob.
+ - The bootstrapping involves some changes to the existing emr.py that
+ breaks the existing emr runner.  This is mostly because I'm lazy. It's not
+ that hard to fix.
+ - Streaming to stdout at the end doesn't work for some reason, but if you
+ specify an S3:// output, you can read it from there just fine.
+
+ How it works:
+ - Uses the alestic.com Ubuntu AMIs for EC2.
+ - Bootstrapping of files is via S3, just like how EMR does it, except
+ they're downloaded via 's3cmd get --recursive'
+ - There's a server.py that runs on your "first" EC2 instance.  It's a
+ tornado loop.  It uses Popen('ssh') to connect with all the other hosts and
+ run client.py on them.  client.py does all the mapping and reducing.
+ - Each step, mapper or reducer, is its own step.  i.e. if you have both a
+ map and a reduce, you have 2 steps.
+ - Mappers read individual lines from a zmq socket, process them, and emit
+ them out immediately to another socket.  Each step knows the "downstream"
+ step, and which sockets it needs to send to.  If the downstream step is a
+ reducer, then we bucket to a particular reducer socket based on a simple
+ hash modulo of the key.
+ - Reducers read their input and pipe it directly into the unix "sort"
+ process.  Then, after all the upstream mappers are done, the reducers read
+ from the 'sort' stdout and run the reduce tasks, passing on the output to
+ whatever the downstream step is.
+ - For maximum speed, I do some crazy things mounting all the available
+ ephemeral drives and use all of them as tmp space for 'sort'.  This really
+ only makes a difference if you reduce a LOT of input, but it does help
+ quite a bit.
+
+ Anyway, it's just a fun experiment that I thought would be interesting to
+ share.  I'd be interested to know benchmarks if you do end up playing with
+ it, but I'm not seeing huge performance gains over EMR.  Although the light
+ memory footprint is a nice plus, it's probably not worth the transition for
+ Yelp.
+
+ Ben
