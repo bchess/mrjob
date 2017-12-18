@@ -31,6 +31,7 @@ For more information, see :ref:`job-protocols` and :ref:`writing-protocols`.
 # don't add imports here that aren't part of the standard Python library,
 # since MRJobs need to run in Amazon's generic EMR environment
 import json
+import traceback
 
 try:
     import cPickle as pickle  # Python 2 only
@@ -203,7 +204,10 @@ class UltraJSONProtocol(_KeyCachingProtocol):
     """
     def _loads(self, value):
         # ujson can handle bytes even in Python 3
-        return ujson.loads(value)
+        try:
+            return ujson.loads(value)
+        except:
+            raise ValueError('Exception parsing string %r (%r)' % (value, traceback.format_exc()))
 
     if PY2:
         def _dumps(self, value):
